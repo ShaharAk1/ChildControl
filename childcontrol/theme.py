@@ -338,10 +338,24 @@ class PillButton(tk.Canvas):
         self._fg = fg
         self._font = font or (FONT, 10, "bold")
         self._padx, self._pady = padx, pady
+        self._enabled = True
         self._render(hover=False)
         self.bind("<Enter>", lambda _e: self._render(hover=True))
         self.bind("<Leave>", lambda _e: self._render(hover=False))
-        self.bind("<Button-1>", lambda _e: self._command and self._command())
+        self.bind("<Button-1>", self._on_click)
+
+    def _on_click(self, _event) -> None:
+        if self._enabled and self._command:
+            self._command()
+
+    def set_text(self, text: str) -> None:
+        self._text = text
+        self._render(hover=False)
+
+    def set_enabled(self, enabled: bool) -> None:
+        self._enabled = enabled
+        self.configure(cursor="hand2" if enabled else "arrow")
+        self._render(hover=False)
 
     def _render(self, hover: bool) -> None:
         self.delete("all")
@@ -349,8 +363,11 @@ class PillButton(tk.Canvas):
         w = font_obj.measure(self._text) + self._padx * 2
         h = font_obj.metrics("linespace") + self._pady * 2
         self.configure(width=w, height=h)
-        round_rect(self, 0, 0, w - 1, h - 1, radius=h / 2,
-                   fill=self._hover if hover else self._fill, outline="")
+        if not self._enabled:
+            fill = MUTED
+        else:
+            fill = self._hover if hover else self._fill
+        round_rect(self, 0, 0, w - 1, h - 1, radius=h / 2, fill=fill, outline="")
         self.create_text(w / 2, h / 2, text=self._text, fill=self._fg, font=self._font)
 
 

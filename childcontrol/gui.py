@@ -871,11 +871,19 @@ def main() -> int:
     cfg = config.load()
     root = tk.Tk()
     root.withdraw()
-    if not PasswordGate.unlock(root, cfg):
+
+    if not any(install.status().values()):
+        from . import wizard
+        wiz = wizard.InstallWizard(root, cfg)
+        root.wait_window(wiz)
+        if not wiz.result:
+            root.destroy()
+            return 1
+    elif not PasswordGate.unlock(root, cfg):
         root.destroy()
         return 1
-    root.destroy()
 
+    root.destroy()
     Console(config.load()).mainloop()
     return 0
 

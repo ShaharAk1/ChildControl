@@ -123,16 +123,22 @@ State lives in `C:\ProgramData\ChildControl\`:
 1. Copy this folder to his machine and install Python 3.11+ **for all users**
    (the SYSTEM task needs an interpreter it can reach — not a per-user install
    under `C:\Users\<you>\AppData`).
-2. Run `run_console.pyw`. It asks for admin rights, then asks you to set the
-   parent password.
-3. **Setup** tab → enter his Windows account name → **Install / repair**.
-4. **Weekly schedule** tab → paint his week → **Save changes**.
-5. Check the **Blocked apps** and **Blocked websites** tabs, then Save.
+2. Run `run_console.pyw`. It asks for admin rights, then — the first time,
+   with nothing installed yet — walks you through a setup wizard: set the
+   parent password, checks that this machine can actually run the background
+   tasks (admin rights, Python reachable by a SYSTEM task, Task Scheduler
+   running), lets you pick his account from the real local accounts on the
+   machine, then installs everything with a live pass/fail per step instead
+   of one lump error dialog at the end.
+3. **Weekly schedule** tab → paint his week → **Save changes**.
+4. Check the **Blocked apps** and **Blocked websites** tabs, then Save.
 
 The **Now** tab shows the live state and whether the agent is healthy.
 
-To remove everything — tasks, hosts entries, firewall rules, browser policy —
-use **Uninstall** on the Setup tab.
+The wizard only appears once, when nothing is installed yet. Afterward, use
+the **Setup** tab's **Install / repair** to redo it (e.g. after moving the
+folder or reinstalling Python) and **Uninstall** to remove everything —
+tasks, hosts entries, firewall rules, browser policy.
 
 ### Command line equivalents
 
