@@ -14,7 +14,7 @@ import sys
 import time
 from datetime import datetime
 
-from . import apps_block, browser_policy, config, firewall, hosts_block
+from . import activity, apps_block, browser_policy, config, firewall, hosts_block, winproc
 from . import schedule as sched
 from .util import (
     REQUEST_DIR,
@@ -37,6 +37,7 @@ class Enforcer:
         self._firewall_programs: list[str] | None = None
         self._firewall_enabled: bool | None = None
         self._last_state: str | None = None
+        self._session = activity.SessionTracker()
 
     def tick(self) -> dict:
         cfg = config.load()
@@ -50,7 +51,12 @@ class Enforcer:
 
         self._apply_sites(cfg, restricted)
         self._apply_firewall(cfg, restricted)
-        stopped = self._apply_processes(cfg, restricted)
+        stopped, others = self._apply_processes(cfg, restricted)
+        visited_sites, blocked_sites_hit = self._scan_sites(cfg, restricted)
+
+        self._session.update(restricted, now, state, stopped, others, blocked_sites_hit, visited_sites)
+        if stopped:
+            activity.record_kills(stopped, now)
 
         status = self._status(cfg, now, state, override, stopped)
         write_json(STATUS_PATH, status)
@@ -85,16 +91,40 @@ class Enforcer:
                 log.info("firewall rules %s", "enabled" if restricted else "disabled")
             self._firewall_enabled = restricted
 
-    def _apply_processes(self, cfg: dict, restricted: bool) -> list[str]:
+    def _apply_processes(
+        self, cfg: dict, restricted: bool
+    ) -> tuple[list[winproc.Process], list[winproc.Process]]:
         if not restricted:
-            return []
-        stopped = apps_block.enforce(cfg)
-        for item in stopped:
-            log.info("stopped %s", item)
-        return stopped
+            return [], []
+        stopped, others = apps_block.enforce(cfg)
+        for process in stopped:
+            log.info("stopped %s (pid %d)", process.name, process.pid)
+        return stopped, others
+
+    def _scan_sites(self, cfg: dict, restricted: bool) -> tuple[list[str], list[str]]:
+        """Which domains showed up in the DNS cache: (visited, blocked-attempts)."""
+        if not restricted:
+            return [], []
+        try:
+            hostnames = activity.snapshot_dns_cache()
+        except Exception:
+            log.exception("dns cache scan failed")
+            return [], []
+        blocked_set = {hosts_block.normalize_domain(d) for d in cfg.get("blocked_sites", [])}
+        visited, blocked_hits = [], []
+        for host in hostnames:
+            domain = hosts_block.normalize_domain(host)
+            if not domain:
+                continue
+            if domain in blocked_set:
+                blocked_hits.append(domain)
+            elif not activity.is_noise_site(domain):
+                visited.append(domain)
+        return visited, blocked_hits
 
     def _status(self, cfg, now, state, override, stopped) -> dict:
         upcoming = sched.next_transition(cfg["schedule"], now)
+        next_free = sched.next_free(cfg["schedule"], now)
         password = cfg.get("password") or {}
         return {
             "state": state,
@@ -108,8 +138,9 @@ class Enforcer:
                 {"at": upcoming[0].isoformat(timespec="seconds"), "state": upcoming[1]}
                 if upcoming else None
             ),
+            "next_free": next_free.isoformat(timespec="seconds") if next_free else None,
             "lock_message": cfg.get("lock_message", ""),
-            "last_stopped": stopped,
+            "last_stopped": [f"{p.name} (pid {p.pid})" for p in stopped],
             "agent_pid": os.getpid(),
             "agent_admin": is_admin(),
             "password_salt": password.get("salt"),

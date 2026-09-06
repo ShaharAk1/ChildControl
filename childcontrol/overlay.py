@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime
 from tkinter import messagebox, simpledialog
 
-from . import config
+from . import activity, config
 from . import schedule as sched
 from .util import (
     REQUEST_DIR,
@@ -164,22 +164,30 @@ class LockScreen:
 
 
 class WarningToast:
-    """Small topmost notice shown shortly before restrictions start."""
+    """Small topmost notice shown shortly before restrictions start (or right
+    after an app gets blocked). `corner` keeps the two kinds from overlapping
+    if they ever land at the same moment."""
 
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Tk, corner: str = "top-right") -> None:
         self.root = root
         self.window: tk.Toplevel | None = None
+        self.corner = corner
 
-    def show(self, text: str, seconds: int = 12) -> None:
+    def show(self, text: str, seconds: int = 12, accent: str | None = None) -> None:
         self.dismiss()
         win = tk.Toplevel(self.root)
         win.overrideredirect(True)
         win.attributes("-topmost", True)
         win.configure(bg="#1d2734")
+        if accent:
+            tk.Frame(win, bg=accent, height=4).pack(fill="x")
         tk.Label(win, text=text, bg="#1d2734", fg=FG, font=("Segoe UI", 13),
                  padx=22, pady=16, wraplength=420, justify="left").pack()
         win.update_idletasks()
-        x = win.winfo_screenwidth() - win.winfo_width() - 30
+        if self.corner == "top-left":
+            x = 30
+        else:
+            x = win.winfo_screenwidth() - win.winfo_width() - 30
         win.geometry(f"+{x}+40")
         self.window = win
         self.root.after(seconds * 1000, self.dismiss)
@@ -194,16 +202,33 @@ class WarningToast:
         self.window = None
 
 
+def build_block_message(name: str, next_free_iso: str | None, now: datetime) -> str:
+    """'"steam.exe" has been blocked.' plus, when the schedule allows it, a
+    second line saying when the computer is free again. If the schedule never
+    has a Free slot, the second line is simply omitted."""
+    line = f'"{name}" has been blocked.'
+    if not next_free_iso:
+        return line
+    target = datetime.fromisoformat(next_free_iso)
+    return line + "\n" + f"You can use the computer freely again {sched.describe_relative(target, now)}."
+
+
 class OverlayApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
         self.root.withdraw()
         self.lock = LockScreen(self.root)
         self.toast = WarningToast(self.root)
+        self.block_toast = WarningToast(self.root, corner="top-left")
         self.warned_for: str | None = None
+        self.status: dict = {}
+        self._last_kill_seq: int | None = None
+        self._kill_queue: list[dict] = []
+        self._kill_toast_busy = False
 
     def poll(self) -> None:
         status = read_json(STATUS_PATH, default={}) or {}
+        self.status = status
         self.lock.status = status
         now = datetime.now()
         if status.get("state") == sched.LOCKED:
@@ -212,7 +237,41 @@ class OverlayApp:
         else:
             self.lock.hide()
             self.maybe_warn(status, now)
+        self.poll_kill_events(status)
         self.root.after(POLL_MS, self.poll)
+
+    def poll_kill_events(self, status: dict) -> None:
+        """Show 'X has been blocked' the moment the agent reports a kill.
+
+        The full-screen lock already explains "you can't use anything, here's
+        when it lifts" - a block toast on top of that would be redundant, so
+        this only fires while the computer is otherwise usable (Study).
+        """
+        data = activity.read_kill_events()
+        events = data.get("events", [])
+        if self._last_kill_seq is None:
+            self._last_kill_seq = events[-1]["seq"] if events else 0
+            return
+        new_events = [e for e in events if e["seq"] > self._last_kill_seq]
+        if not new_events:
+            return
+        self._last_kill_seq = new_events[-1]["seq"]
+        if status.get("state") != sched.LOCKED:
+            self._kill_queue.extend(new_events)
+            self._drain_kill_queue()
+
+    def _drain_kill_queue(self) -> None:
+        if self._kill_toast_busy or not self._kill_queue:
+            return
+        event = self._kill_queue.pop(0)
+        self._kill_toast_busy = True
+        message = build_block_message(event["name"], self.status.get("next_free"), datetime.now())
+        self.block_toast.show(message, seconds=8, accent="#c0392b")
+        self.root.after(8500, self._kill_toast_done)
+
+    def _kill_toast_done(self) -> None:
+        self._kill_toast_busy = False
+        self._drain_kill_queue()
 
     def maybe_warn(self, status: dict, now: datetime) -> None:
         upcoming = status.get("next_change")

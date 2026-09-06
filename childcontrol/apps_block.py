@@ -82,22 +82,42 @@ def is_blocked(process: winproc.Process, names: set[str], folders: list[str]) ->
     return False
 
 
-def find_blocked(cfg: dict) -> list[winproc.Process]:
+def classify(cfg: dict, processes: list[winproc.Process]) -> tuple[list[winproc.Process], list[winproc.Process]]:
+    """Split running processes into (blocked matches, everything else worth noting).
+
+    "Everything else" excludes protected OS processes, so the second list is a
+    reasonable proxy for "programs the child is actually using right now".
+    """
     names = blocked_names(cfg)
     folders = blocked_folders(cfg)
-    if not names and not folders:
-        return []
     own_pid = os.getpid()
-    return [
-        p for p in winproc.list_processes()
-        if p.pid not in (0, 4, own_pid) and is_blocked(p, names, folders)
-    ]
+    blocked, others = [], []
+    for p in processes:
+        if p.pid in (0, 4, own_pid):
+            continue
+        if is_blocked(p, names, folders):
+            blocked.append(p)
+        elif p.lname not in PROTECTED:
+            others.append(p)
+    return blocked, others
 
 
-def enforce(cfg: dict) -> list[str]:
-    """Terminate everything currently blocked. Returns the names it stopped."""
-    stopped = []
-    for process in find_blocked(cfg):
-        if winproc.terminate(process.pid):
-            stopped.append(f"{process.name} (pid {process.pid})")
-    return stopped
+def find_blocked(cfg: dict, processes: list[winproc.Process] | None = None) -> list[winproc.Process]:
+    if processes is None:
+        processes = winproc.list_processes()
+    return classify(cfg, processes)[0]
+
+
+def enforce(
+    cfg: dict, processes: list[winproc.Process] | None = None
+) -> tuple[list[winproc.Process], list[winproc.Process]]:
+    """Terminate everything currently blocked.
+
+    Returns (stopped, others) - the processes actually terminated, and every
+    other non-protected process that was left running, for activity tracking.
+    """
+    if processes is None:
+        processes = winproc.list_processes()
+    blocked, others = classify(cfg, processes)
+    stopped = [p for p in blocked if winproc.terminate(p.pid)]
+    return stopped, others

@@ -51,6 +51,44 @@ isolation), so the lock screen is a separate unprivileged program running in you
 brother's session. It reads `status.json` and covers the screen while the state
 is Locked, showing a countdown and a *Parent unlock* button.
 
+## What he sees when something gets blocked
+
+Whenever the agent kills a blocked app, the lock screen program pops up a small
+notice: *"steam.exe" has been blocked. You can use the computer freely again
+today at 19:00* (or *tomorrow at 8:00*, or a weekday name if it's further out).
+If the schedule genuinely has no Free time coming up, that second line is just
+left off. This only shows during Study — during Locked the full-screen cover
+already explains the same thing, so it stays out of the way.
+
+## The Now tab's activity lists
+
+Underneath the override buttons, the **Now** tab splits into two scrollable
+lists covering the current Study/Locked session (or the last one, if none is
+running):
+
+* **Visited this session** — every app and website that ran or resolved during
+  the session *without* being blocked. Hover a row for its name, the time, and
+  a red **Block** button that adds it to the matching block list immediately.
+* **Blocked attempts** — everything that actually got killed or hit a blocked
+  site. Hover for a green **Unblock** button that removes it from the block
+  list.
+
+Blocking/unblocking only edits the config — it doesn't move the historical
+entry between lists, since that record of what actually happened doesn't
+change. A name only ever appears in one bucket per session (first occurrence
+wins), so relaunching the same blocked game repeatedly doesn't spam the list.
+
+Website visits are read from the Windows DNS cache (`ipconfig /displaydns`),
+which works across every browser because the DoH policy above forces them all
+through it — no extra software needed. A short built-in noise filter skips
+OS/telemetry domains (Windows Update, Microsoft telemetry, CDN infrastructure)
+so the visited list stays about what he actually opened. Background apps
+already running when a session starts aren't logged as "visited" — only things
+that start during the session are, so logon-time clutter (antivirus, tray
+apps, etc.) doesn't fill the list up front. This also means a background app
+that only starts mid-session (e.g. a scheduled updater) can still show up —
+there's no attempt to guess whether a process has a visible window.
+
 ## Layout
 
 ```
@@ -67,6 +105,7 @@ childcontrol/
   install.py           scheduled tasks + data-directory ACLs
   winproc.py           ctypes process list / terminate
   apps_block.py        which processes are blocked right now
+  activity.py          session visited/blocked log + DNS-cache site detection
   hosts_block.py       hosts-file website blocking
   firewall.py          Windows Firewall rule group
   browser_policy.py    disables browser DNS-over-HTTPS
@@ -75,6 +114,8 @@ childcontrol/
 
 State lives in `C:\ProgramData\ChildControl\`:
 `config.json` (settings), `status.json` (what the agent is doing, world-readable),
+`activity.json` (current/last session's visited + blocked lists),
+`kill_events.json` (raw per-kill log driving the lock screen's block toast),
 `requests\` (unlock requests from the lock screen), `childcontrol.log`.
 
 ## Install on his PC

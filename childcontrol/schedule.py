@@ -65,6 +65,27 @@ def next_transition(week, moment: datetime) -> tuple[datetime, str] | None:
     return None
 
 
+def next_free(week, moment: datetime) -> datetime | None:
+    """The next moment the weekly schedule allows Free use, or None if it never does."""
+    week = normalize(week)
+    cursor = moment.replace(second=0, microsecond=0)
+    cursor -= timedelta(minutes=cursor.minute % SLOT_MINUTES)
+    for _ in range(SLOTS_PER_DAY * 8):
+        cursor += timedelta(minutes=SLOT_MINUTES)
+        if week[cursor.weekday()][slot_index(cursor)] == FREE:
+            return cursor
+    return None
+
+
+def describe_relative(target: datetime, now: datetime) -> str:
+    """'today at 19:00' / 'tomorrow at 8:00' / 'Monday at 8:00'."""
+    if target.date() == now.date():
+        return f"today at {target.strftime('%H:%M')}"
+    if target.date() == (now + timedelta(days=1)).date():
+        return f"tomorrow at {target.strftime('%H:%M')}"
+    return f"{target.strftime('%A')} at {target.strftime('%H:%M')}"
+
+
 def describe_day(row: str) -> str:
     """Human summary of one day, e.g. 'Free 00:00-16:00, Study 16:00-19:00'."""
     row = normalize([row] * 7)[0]

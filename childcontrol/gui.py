@@ -13,7 +13,7 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import messagebox, simpledialog, ttk
 
-from . import browser_policy, config, install, steamlib
+from . import activity, browser_policy, config, install, steamlib
 from . import schedule as sched
 from .util import (
     DATA_DIR,
@@ -209,6 +209,115 @@ class ListEditor(ttk.Frame):
         return list(self.listbox.get(0, "end"))
 
 
+class HoverActionList(ttk.Frame):
+    """A scrollable (Type, Name, Time) list where hovering a row pops up its
+    name, timestamp and one action button - "Block" on the visited list,
+    "Unblock" on the blocked-attempts list."""
+
+    _HIDE_DELAY_MS = 250
+
+    def __init__(self, master, title: str, action_text: str, action_bg: str, on_action) -> None:
+        super().__init__(master)
+        self.on_action = on_action
+        self.action_text = action_text
+        self.action_bg = action_bg
+        self._entries: dict[str, dict] = {}
+        self._popup: tk.Toplevel | None = None
+        self._popup_row: str | None = None
+        self._hide_job: str | None = None
+
+        ttk.Label(self, text=title, font=("Segoe UI Semibold", 10)).pack(anchor="w")
+        self.subtitle = ttk.Label(self, text="", foreground="#5b6472")
+        self.subtitle.pack(anchor="w", pady=(0, 4))
+
+        container = ttk.Frame(self)
+        container.pack(fill="both", expand=True)
+        self.tree = ttk.Treeview(container, columns=("type", "name", "time"),
+                                 show="headings", selectmode="none", height=8)
+        for col, text, width in (("type", "Type", 45), ("name", "Name", 220), ("time", "Time", 90)):
+            self.tree.heading(col, text=text)
+            self.tree.column(col, width=width, anchor="w")
+        scroll = ttk.Scrollbar(container, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scroll.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="left", fill="y")
+
+        self.tree.bind("<Motion>", self._on_motion)
+        self.tree.bind("<Leave>", self._schedule_hide)
+
+    def load(self, entries: list[dict], subtitle: str) -> None:
+        """`entries` newest-first: [{kind, name, at}, ...]."""
+        self._hide_popup()
+        self.subtitle.configure(text=subtitle)
+        self.tree.delete(*self.tree.get_children())
+        self._entries.clear()
+        for entry in entries:
+            when = datetime.fromisoformat(entry["at"]).strftime("%a %H:%M")
+            kind_label = "App" if entry["kind"] == "app" else "Site"
+            row = self.tree.insert("", "end", values=(kind_label, entry["name"], when))
+            self._entries[row] = entry
+
+    def _on_motion(self, event) -> None:
+        row = self.tree.identify_row(event.y)
+        if row == self._popup_row:
+            return
+        self._cancel_hide()
+        if row:
+            self._show_popup(row, event.x_root, event.y_root)
+        else:
+            self._schedule_hide()
+
+    def _show_popup(self, row: str, x_root: int, y_root: int) -> None:
+        self._hide_popup()
+        entry = self._entries.get(row)
+        if entry is None:
+            return
+        self._popup_row = row
+
+        win = tk.Toplevel(self)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        win.configure(bg="#20242b")
+        frame = tk.Frame(win, bg="#20242b", padx=10, pady=8)
+        frame.pack()
+        tk.Label(frame, text=entry["name"], bg="#20242b", fg="#f2f5f8",
+                font=("Segoe UI Semibold", 10)).pack(anchor="w")
+        when = datetime.fromisoformat(entry["at"]).strftime("%A %H:%M")
+        tk.Label(frame, text=when, bg="#20242b", fg="#8b97a8",
+                font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 6))
+        tk.Button(frame, text=self.action_text, bg=self.action_bg, fg="white",
+                  relief="flat", padx=10, pady=3, font=("Segoe UI", 9),
+                  activebackground=self.action_bg, activeforeground="white",
+                  cursor="hand2", command=lambda: self._trigger(entry)).pack(anchor="w")
+        win.bind("<Enter>", self._cancel_hide)
+        win.bind("<Leave>", self._schedule_hide)
+        win.geometry(f"+{x_root + 12}+{y_root + 12}")
+        self._popup = win
+
+    def _trigger(self, entry: dict) -> None:
+        self._hide_popup()
+        self.on_action(entry)
+
+    def _schedule_hide(self, _event=None) -> None:
+        self._cancel_hide()
+        self._hide_job = self.after(self._HIDE_DELAY_MS, self._hide_popup)
+
+    def _cancel_hide(self, _event=None) -> None:
+        if self._hide_job is not None:
+            self.after_cancel(self._hide_job)
+            self._hide_job = None
+
+    def _hide_popup(self) -> None:
+        self._cancel_hide()
+        if self._popup is not None:
+            try:
+                self._popup.destroy()
+            except tk.TclError:
+                pass
+            self._popup = None
+        self._popup_row = None
+
+
 class Console(tk.Tk):
     def __init__(self, cfg: dict) -> None:
         super().__init__()
@@ -269,6 +378,22 @@ class Console(tk.Tk):
 
         ttk.Label(tab, text="Overrides win over the weekly schedule until they expire.",
                   foreground="#5b6472").pack()
+
+        lists = ttk.Frame(tab)
+        lists.pack(fill="both", expand=True, padx=16, pady=(10, 12))
+        lists.columnconfigure(0, weight=1)
+        lists.columnconfigure(1, weight=1)
+        lists.rowconfigure(0, weight=1)
+
+        self.visited_list = HoverActionList(
+            lists, "Visited this session", "Block", "#c0392b", self._quick_block)
+        self.visited_list.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+
+        self.blocked_list = HoverActionList(
+            lists, "Blocked attempts", "Unblock", "#2e7d32", self._quick_unblock)
+        self.blocked_list.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+
+        self.after(500, self._refresh_activity)
 
     def _build_schedule_tab(self, notebook: ttk.Notebook) -> None:
         tab = ttk.Frame(notebook)
@@ -447,6 +572,31 @@ class Console(tk.Tk):
         else:
             messagebox.showinfo("Uninstall", "Everything has been removed.", parent=self)
 
+    def _quick_block(self, entry: dict) -> None:
+        """Add a "visited" entry to the block list from its hover popup."""
+        self.cfg = self.collect()
+        key = "blocked_apps" if entry["kind"] == "app" else "blocked_sites"
+        if entry["name"].lower() in {v.lower() for v in self.cfg[key]}:
+            self._flash(f'"{entry["name"]}" is already blocked.')
+            return
+        self.cfg[key].append(entry["name"])
+        config.save(self.cfg)
+        (self.apps_editor if entry["kind"] == "app" else self.sites_editor).load(self.cfg[key])
+        self._flash(f'Added "{entry["name"]}" to the block list.')
+
+    def _quick_unblock(self, entry: dict) -> None:
+        """Remove a "blocked attempts" entry from the block list from its hover popup."""
+        self.cfg = self.collect()
+        key = "blocked_apps" if entry["kind"] == "app" else "blocked_sites"
+        before = len(self.cfg[key])
+        self.cfg[key] = [v for v in self.cfg[key] if v.lower() != entry["name"].lower()]
+        if len(self.cfg[key]) == before:
+            self._flash(f'"{entry["name"]}" was not on the block list.')
+            return
+        config.save(self.cfg)
+        (self.apps_editor if entry["kind"] == "app" else self.sites_editor).load(self.cfg[key])
+        self._flash(f'Removed "{entry["name"]}" from the block list.')
+
     def apply_browser_policy(self) -> None:
         failed = browser_policy.apply()
         if failed:
@@ -511,6 +661,25 @@ class Console(tk.Tk):
             note = f"Agent healthy (pid {status.get('agent_pid')})."
         self.agent_label.configure(text=note)
         self.after(2000, self._refresh_status)
+
+    def _refresh_activity(self) -> None:
+        """Show the current study/lock session's activity, or the last one."""
+        data = activity.read_session_activity()
+        session = data.get("current") or data.get("last")
+        if session is None:
+            self.visited_list.load([], "No study session has happened yet.")
+            self.blocked_list.load([], "No study session has happened yet.")
+        else:
+            started = datetime.fromisoformat(session["started"]).strftime("%a %H:%M")
+            if data.get("current") is not None:
+                subtitle = f"Ongoing session since {started}"
+            else:
+                ended = session.get("ended")
+                ended_txt = datetime.fromisoformat(ended).strftime("%H:%M") if ended else "?"
+                subtitle = f"Last session {started}-{ended_txt}"
+            self.visited_list.load(list(reversed(session.get("visited", []))), subtitle)
+            self.blocked_list.load(list(reversed(session.get("blocked", []))), subtitle)
+        self.after(4000, self._refresh_activity)
 
     def _flash(self, text: str) -> None:
         self.footer.configure(text=text)
