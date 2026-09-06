@@ -172,6 +172,7 @@ class ListEditor(ttk.Frame):
     def __init__(self, master, items: list[str], placeholder: str, height: int = 12) -> None:
         super().__init__(master)
         self.entry_var = tk.StringVar()
+        self._hover_index: int | None = None
 
         card = theme.card(self)
         card.pack(fill="both", expand=True)
@@ -187,6 +188,8 @@ class ListEditor(ttk.Frame):
         self.listbox.configure(yscrollcommand=scroll.set)
         self.listbox.grid(row=0, column=0, sticky="nsew", padx=(16, 0), pady=(12, 0))
         scroll.grid(row=0, column=1, sticky="ns", padx=(0, 8), pady=(12, 0))
+        self.listbox.bind("<Motion>", self._on_motion)
+        self.listbox.bind("<Leave>", self._on_leave)
 
         row = ttk.Frame(body, style="Card.TFrame")
         row.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(10, 4))
@@ -204,6 +207,7 @@ class ListEditor(ttk.Frame):
         self.load(items)
 
     def load(self, items: list[str]) -> None:
+        self._hover_index = None
         self.listbox.delete(0, "end")
         for item in items:
             self.listbox.insert("end", item)
@@ -217,11 +221,41 @@ class ListEditor(ttk.Frame):
         self.entry_var.set("")
 
     def remove(self) -> None:
+        self._hover_index = None
         for index in reversed(self.listbox.curselection()):
             self.listbox.delete(index)
 
     def items(self) -> list[str]:
         return list(self.listbox.get(0, "end"))
+
+    def _on_motion(self, event) -> None:
+        index: int | None = None
+        if self.listbox.size() > 0:
+            candidate = self.listbox.nearest(event.y)
+            bbox = self.listbox.bbox(candidate)
+            if bbox:
+                _x, by, _w, bh = bbox
+                if by <= event.y < by + bh:
+                    index = candidate
+        self._set_hover(index)
+
+    def _on_leave(self, _event=None) -> None:
+        self._set_hover(None)
+
+    def _set_hover(self, index: int | None) -> None:
+        """Highlight the hovered row and switch to a pointer cursor, matching
+        the activity lists on the Now tab."""
+        if index == self._hover_index:
+            return
+        if self._hover_index is not None:
+            try:
+                self.listbox.itemconfig(self._hover_index, background=theme.GLASS, foreground=theme.TEXT)
+            except tk.TclError:
+                pass
+        if index is not None:
+            self.listbox.itemconfig(index, background=theme.BG_ALT, foreground=theme.TEXT)
+        self.listbox.configure(cursor="hand2" if index is not None else "")
+        self._hover_index = index
 
 
 class HoverActionList(ttk.Frame):
@@ -365,6 +399,52 @@ class HoverActionList(ttk.Frame):
         self._popup_row = None
 
 
+class ScrollableTab(ttk.Frame):
+    """A notebook tab body that scrolls vertically once its content is taller
+    than the window - build tab content into `.body`, not into this frame
+    directly (same pattern as `theme.card`'s `.body`)."""
+
+    def __init__(self, master: ttk.Notebook) -> None:
+        super().__init__(master)
+        self.canvas = tk.Canvas(self, highlightthickness=0, bg=theme.BG)
+        vscroll = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=vscroll.set)
+        self.canvas.pack(side="left", fill="both", expand=True)
+        vscroll.pack(side="right", fill="y")
+
+        self.body = ttk.Frame(self.canvas)
+        self._window = self.canvas.create_window(0, 0, window=self.body, anchor="nw")
+
+        self.body.bind("<Configure>", self._on_body_configure)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+        self.canvas.bind("<Enter>", self._bind_wheel)
+        self.canvas.bind("<Leave>", self._unbind_wheel)
+
+    def _on_body_configure(self, _event=None) -> None:
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event) -> None:
+        self.canvas.itemconfigure(self._window, width=event.width)
+
+    def _bind_wheel(self, _event=None) -> None:
+        self.canvas.bind_all("<MouseWheel>", self._on_wheel)
+
+    def _unbind_wheel(self, _event=None) -> None:
+        self.canvas.unbind_all("<MouseWheel>")
+
+    def _on_wheel(self, event) -> None:
+        # A Treeview/Listbox nested inside (the activity lists, the block
+        # lists) already scrolls itself on the wheel - only take over when
+        # the cursor isn't over one of those, so scrolling a long list never
+        # fights with scrolling the tab around it.
+        widget = event.widget
+        while widget is not None:
+            if isinstance(widget, (ttk.Treeview, tk.Listbox)):
+                return
+            widget = getattr(widget, "master", None)
+        self.canvas.yview_scroll(int(-event.delta / 120), "units")
+
+
 class Console(tk.Tk):
     def __init__(self, cfg: dict) -> None:
         super().__init__()
@@ -428,8 +508,9 @@ class Console(tk.Tk):
     # --- tabs --------------------------------------------------------------
 
     def _build_status_tab(self, notebook: ttk.Notebook) -> None:
-        tab = ttk.Frame(notebook)
-        notebook.add(tab, text="Now")
+        scroll = ScrollableTab(notebook)
+        notebook.add(scroll, text="Now")
+        tab = scroll.body
 
         self.state_label = tk.Label(tab, text="-", font=(theme.FONT, 34, "bold"),
                                     bg=theme.BG)
@@ -477,16 +558,18 @@ class Console(tk.Tk):
         self.after(500, self._refresh_activity)
 
     def _build_schedule_tab(self, notebook: ttk.Notebook) -> None:
-        tab = ttk.Frame(notebook)
-        notebook.add(tab, text="Weekly schedule")
+        scroll = ScrollableTab(notebook)
+        notebook.add(scroll, text="Weekly schedule")
+        tab = scroll.body
         self.grid_editor = ScheduleGrid(tab, self.cfg["schedule"])
         self.grid_editor.pack(fill="both", expand=True)
         ttk.Label(tab, text="Click or drag across the grid to paint. Each cell is 30 minutes.",
                   style="Muted.TLabel").pack(anchor="w", padx=16, pady=(0, 10))
 
     def _build_apps_tab(self, notebook: ttk.Notebook) -> None:
-        tab = ttk.Frame(notebook)
-        notebook.add(tab, text="Blocked apps")
+        scroll = ScrollableTab(notebook)
+        notebook.add(scroll, text="Blocked apps")
+        tab = scroll.body
 
         self.apps_editor = ListEditor(
             tab, self.cfg["blocked_apps"],
@@ -517,8 +600,9 @@ class Console(tk.Tk):
         self.folders_editor.pack(fill="both", expand=True, padx=12, pady=(4, 12))
 
     def _build_sites_tab(self, notebook: ttk.Notebook) -> None:
-        tab = ttk.Frame(notebook)
-        notebook.add(tab, text="Blocked websites")
+        scroll = ScrollableTab(notebook)
+        notebook.add(scroll, text="Blocked websites")
+        tab = scroll.body
         self.sites_editor = ListEditor(
             tab, self.cfg["blocked_sites"],
             "One domain per line. www. is added automatically; other subdomains are not.")
@@ -531,8 +615,9 @@ class Console(tk.Tk):
                   ).pack(anchor="w", padx=12, pady=(0, 12))
 
     def _build_setup_tab(self, notebook: ttk.Notebook) -> None:
-        tab = ttk.Frame(notebook)
-        notebook.add(tab, text="Setup")
+        scroll = ScrollableTab(notebook)
+        notebook.add(scroll, text="Setup")
+        tab = scroll.body
 
         account = theme.card(tab, title="Child's Windows account")
         account.pack(fill="x", padx=12, pady=12)
