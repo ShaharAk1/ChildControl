@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime
 from tkinter import messagebox, simpledialog
 
-from . import activity, config
+from . import activity, config, theme
 from . import schedule as sched
 from .util import (
     REQUEST_DIR,
@@ -28,10 +28,11 @@ from .util import (
 
 log = setup_logging("overlay")
 
-BG = "#0f1319"
-FG = "#f2f5f8"
-MUTED = "#8b97a8"
-ACCENT = "#68a0ff"
+BG = theme.GLASS_BG
+PANEL = theme.GLASS_PANEL
+FG = theme.GLASS_TEXT
+MUTED = theme.GLASS_MUTED
+ACCENT = theme.ACCENT
 POLL_MS = 2000
 MUTEX_NAME = r"Local\ChildControlOverlay"
 UNLOCK_MINUTES = 60
@@ -66,22 +67,51 @@ class LockScreen:
         win.protocol("WM_DELETE_WINDOW", lambda: None)
         win.bind("<Escape>", lambda _event: "break")
 
-        frame = tk.Frame(win, bg=BG)
-        frame.place(relx=0.5, rely=0.5, anchor="center")
+        backdrop = theme.Backdrop(win, top=theme.GLASS_BG, bottom=theme.GLASS_BG_BOTTOM,
+                                  blobs=(theme.DBLOB_1, theme.DBLOB_2, theme.DBLOB_3))
+        backdrop.pack(fill="both", expand=True)
 
-        self.clock = tk.Label(frame, text="", bg=BG, fg=MUTED, font=("Segoe UI", 22))
-        self.clock.pack(pady=(0, 10))
-        tk.Label(frame, text="Computer locked", bg=BG, fg=FG,
-                 font=("Segoe UI Semibold", 46)).pack()
-        self.message = tk.Label(frame, text="", bg=BG, fg=FG, font=("Segoe UI", 18),
+        panel = tk.Frame(backdrop, bg=PANEL, padx=64, pady=48)
+        panel_win = backdrop.create_window(0, 0, window=panel, anchor="center")
+
+        self.clock = tk.Label(panel, text="", bg=PANEL, fg=MUTED, font=(theme.FONT, 20))
+        self.clock.pack(pady=(0, 12))
+        tk.Label(panel, text="Computer locked", bg=PANEL, fg=FG,
+                 font=(theme.FONT, 44, "bold")).pack()
+        self.message = tk.Label(panel, text="", bg=PANEL, fg=FG, font=(theme.FONT, 16),
                                 wraplength=900, justify="center")
-        self.message.pack(pady=(18, 6))
-        self.countdown = tk.Label(frame, text="", bg=BG, fg=ACCENT, font=("Segoe UI", 20))
-        self.countdown.pack(pady=(6, 26))
-        tk.Button(frame, text="Parent unlock", command=self.ask_unlock,
-                  bg="#1d2734", fg=FG, activebackground="#28374a", activeforeground=FG,
-                  relief="flat", padx=18, pady=8, font=("Segoe UI", 11),
-                  cursor="hand2").pack()
+        self.message.pack(pady=(20, 8))
+        self.countdown = tk.Label(panel, text="", bg=PANEL, fg=ACCENT, font=(theme.FONT, 18, "bold"))
+        self.countdown.pack(pady=(6, 30))
+        theme.PillButton(panel, text="Parent unlock", command=self.ask_unlock,
+                         bg=PANEL, fill=theme.ACCENT, hover=theme.ACCENT_HOVER,
+                         font=(theme.FONT, 11, "bold"), padx=24, pady=12).pack()
+
+        radius = 24
+
+        def redraw(_event=None) -> None:
+            backdrop.update_idletasks()
+            bw, bh = backdrop.winfo_width(), backdrop.winfo_height()
+            if bw < 2 or bh < 2:
+                return
+            pw, ph = panel.winfo_reqwidth(), panel.winfo_reqheight()
+            cx, cy = bw / 2, bh / 2
+            x1, y1 = cx - pw / 2, cy - ph / 2
+            x2, y2 = cx + pw / 2, cy + ph / 2
+            backdrop.delete("lockpanel")
+            theme.draw_shadow(backdrop, x1, y1, x2, y2, radius,
+                              fade_to=backdrop.color_at(cy, bh), base="#05070c",
+                              layers=6, spread=3, drop=6, tags="lockpanel")
+            theme.round_rect(backdrop, x1, y1, x2, y2, radius=radius,
+                             fill=PANEL, outline=theme.GLASS_BORDER_DARK, width=1,
+                             tags="lockpanel")
+            backdrop.tag_lower("lockpanel")
+            backdrop.tag_raise(panel_win)
+            backdrop.coords(panel_win, cx, cy)
+
+        panel.bind("<Configure>", redraw)
+        backdrop.bind("<Configure>", redraw, add="+")
+        win.after(50, redraw)
 
         self.window = win
         log.info("lock screen shown")
@@ -178,10 +208,13 @@ class WarningToast:
         win = tk.Toplevel(self.root)
         win.overrideredirect(True)
         win.attributes("-topmost", True)
-        win.configure(bg="#1d2734")
+        win.configure(bg=PANEL)
+        outer = tk.Frame(win, bg=PANEL, highlightbackground=theme.GLASS_BORDER_DARK,
+                         highlightthickness=1)
+        outer.pack()
         if accent:
-            tk.Frame(win, bg=accent, height=4).pack(fill="x")
-        tk.Label(win, text=text, bg="#1d2734", fg=FG, font=("Segoe UI", 13),
+            tk.Frame(outer, bg=accent, height=4).pack(fill="x")
+        tk.Label(outer, text=text, bg=PANEL, fg=FG, font=(theme.FONT, 13),
                  padx=22, pady=16, wraplength=420, justify="left").pack()
         win.update_idletasks()
         if self.corner == "top-left":
@@ -189,6 +222,7 @@ class WarningToast:
         else:
             x = win.winfo_screenwidth() - win.winfo_width() - 30
         win.geometry(f"+{x}+40")
+        theme.round_corners(win, "small")
         self.window = win
         self.root.after(seconds * 1000, self.dismiss)
 
@@ -266,7 +300,7 @@ class OverlayApp:
         event = self._kill_queue.pop(0)
         self._kill_toast_busy = True
         message = build_block_message(event["name"], self.status.get("next_free"), datetime.now())
-        self.block_toast.show(message, seconds=8, accent="#c0392b")
+        self.block_toast.show(message, seconds=8, accent=theme.DANGER)
         self.root.after(8500, self._kill_toast_done)
 
     def _kill_toast_done(self) -> None:

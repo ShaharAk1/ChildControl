@@ -13,7 +13,7 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import messagebox, simpledialog, ttk
 
-from . import activity, browser_policy, config, install, steamlib
+from . import activity, browser_policy, config, install, steamlib, theme
 from . import schedule as sched
 from .util import (
     DATA_DIR,
@@ -28,6 +28,7 @@ log = setup_logging("console")
 
 CELL_W = 17
 CELL_H = 28
+CELL_RADIUS = 4
 LABEL_W = 92
 HEADER_H = 22
 STALE_SECONDS = 45
@@ -78,9 +79,11 @@ class ScheduleGrid(ttk.Frame):
         self._build_toolbar()
         width = LABEL_W + sched.SLOTS_PER_DAY * CELL_W + 2
         height = HEADER_H + len(sched.DAYS) * CELL_H + 2
-        self.canvas = tk.Canvas(self, width=width, height=height, highlightthickness=0,
-                                background="#f4f5f7")
-        self.canvas.pack(padx=8, pady=(4, 8))
+        card = theme.card(self)
+        card.pack(fill="x", padx=8, pady=(4, 8))
+        self.canvas = tk.Canvas(card.body, width=width, height=height, highlightthickness=0,
+                                background=theme.GLASS)
+        self.canvas.pack(padx=16, pady=16)
         self._draw()
         self.canvas.bind("<Button-1>", self._on_paint)
         self.canvas.bind("<B1-Motion>", self._on_paint)
@@ -88,22 +91,25 @@ class ScheduleGrid(ttk.Frame):
     def _build_toolbar(self) -> None:
         bar = ttk.Frame(self)
         bar.pack(fill="x", padx=8, pady=(8, 0))
-        ttk.Label(bar, text="Paint with:").pack(side="left")
+        ttk.Label(bar, text="Paint with", style="Muted.TLabel").pack(side="left")
         for state in sched.STATES:
             ttk.Radiobutton(bar, text=sched.STATE_NAMES[state], value=state,
-                            variable=self.brush).pack(side="left", padx=(8, 0))
+                            variable=self.brush).pack(side="left", padx=(10, 0))
         ttk.Button(bar, text="Copy Monday to Tue-Fri",
                    command=self.copy_monday_to_weekdays).pack(side="right")
         ttk.Button(bar, text="Fill whole week with brush",
                    command=self.fill_week).pack(side="right", padx=6)
 
         legend = ttk.Frame(self)
-        legend.pack(fill="x", padx=8, pady=(6, 0))
+        legend.pack(fill="x", padx=8, pady=(8, 0))
         for state in sched.STATES:
-            swatch = tk.Frame(legend, background=sched.STATE_COLORS[state], width=14, height=14)
-            swatch.pack(side="left", padx=(0, 6))
-            swatch.pack_propagate(False)
-            ttk.Label(legend, text=sched.STATE_HELP[state]).pack(side="left", padx=(0, 18))
+            dot = tk.Canvas(legend, width=14, height=14, highlightthickness=0,
+                            background=theme.BG)
+            theme.round_rect(dot, 1, 1, 13, 13, radius=4,
+                             fill=sched.STATE_COLORS[state], outline="")
+            dot.pack(side="left", padx=(0, 6))
+            ttk.Label(legend, text=sched.STATE_HELP[state], style="Muted.TLabel"
+                      ).pack(side="left", padx=(0, 18))
 
     def _draw(self) -> None:
         self.canvas.delete("all")
@@ -111,18 +117,18 @@ class ScheduleGrid(ttk.Frame):
         for slot in range(0, sched.SLOTS_PER_DAY, 4):
             x = LABEL_W + slot * CELL_W
             self.canvas.create_text(x + 2, HEADER_H / 2, text=sched.slot_label(slot),
-                                    anchor="w", font=("Segoe UI", 8), fill="#5b6472")
+                                    anchor="w", font=(theme.FONT, 8), fill=theme.MUTED)
         for day, name in enumerate(sched.DAYS):
             y = HEADER_H + day * CELL_H
             self.canvas.create_text(LABEL_W - 10, y + CELL_H / 2, text=name, anchor="e",
-                                    font=("Segoe UI", 9))
+                                    font=(theme.FONT, 9), fill=theme.TEXT)
             row = []
             for slot in range(sched.SLOTS_PER_DAY):
                 x = LABEL_W + slot * CELL_W
-                rect = self.canvas.create_rectangle(
-                    x, y, x + CELL_W, y + CELL_H,
-                    fill=sched.STATE_COLORS[self.week[day][slot]],
-                    outline="#ffffff", width=1)
+                rect = theme.round_rect(
+                    self.canvas, x + 1, y + 1, x + CELL_W - 1, y + CELL_H - 1,
+                    radius=CELL_RADIUS, fill=sched.STATE_COLORS[self.week[day][slot]],
+                    outline=theme.CARD, width=2)
                 row.append(rect)
             self.cells.append(row)
 
@@ -167,22 +173,31 @@ class ListEditor(ttk.Frame):
         super().__init__(master)
         self.entry_var = tk.StringVar()
 
-        self.listbox = tk.Listbox(self, height=height, activestyle="none",
-                                  font=("Consolas", 10), selectmode="extended")
-        scroll = ttk.Scrollbar(self, orient="vertical", command=self.listbox.yview)
-        self.listbox.configure(yscrollcommand=scroll.set)
-        self.listbox.grid(row=0, column=0, sticky="nsew")
-        scroll.grid(row=0, column=1, sticky="ns")
+        card = theme.card(self)
+        card.pack(fill="both", expand=True)
+        body = card.body
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
 
-        row = ttk.Frame(self)
-        row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        self.listbox = tk.Listbox(body, height=height, activestyle="none",
+                                  font=("Consolas", 10), selectmode="extended",
+                                  bg=theme.GLASS, fg=theme.TEXT, bd=0, highlightthickness=0,
+                                  selectbackground=theme.ACCENT_SOFT, selectforeground=theme.TEXT)
+        scroll = ttk.Scrollbar(body, orient="vertical", command=self.listbox.yview)
+        self.listbox.configure(yscrollcommand=scroll.set)
+        self.listbox.grid(row=0, column=0, sticky="nsew", padx=(16, 0), pady=(12, 0))
+        scroll.grid(row=0, column=1, sticky="ns", padx=(0, 8), pady=(12, 0))
+
+        row = ttk.Frame(body, style="Card.TFrame")
+        row.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(10, 4))
         entry = ttk.Entry(row, textvariable=self.entry_var)
         entry.pack(side="left", fill="x", expand=True)
         entry.bind("<Return>", lambda _event: self.add())
-        ttk.Button(row, text="Add", command=self.add).pack(side="left", padx=(6, 0))
+        ttk.Button(row, text="Add", style="Accent.TButton",
+                   command=self.add).pack(side="left", padx=(6, 0))
         ttk.Button(row, text="Remove selected", command=self.remove).pack(side="left", padx=(6, 0))
-        ttk.Label(self, text=placeholder, foreground="#5b6472").grid(
-            row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Label(body, text=placeholder, style="CardMuted.TLabel").grid(
+            row=2, column=0, columnspan=2, sticky="w", padx=16, pady=(2, 14))
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
@@ -225,13 +240,16 @@ class HoverActionList(ttk.Frame):
         self._popup: tk.Toplevel | None = None
         self._popup_row: str | None = None
         self._hide_job: str | None = None
+        self._hover_row: str | None = None
 
-        ttk.Label(self, text=title, font=("Segoe UI Semibold", 10)).pack(anchor="w")
-        self.subtitle = ttk.Label(self, text="", foreground="#5b6472")
-        self.subtitle.pack(anchor="w", pady=(0, 4))
+        ttk.Label(self, text=title, font=(theme.FONT, 10, "bold")).pack(anchor="w")
+        self.subtitle = ttk.Label(self, text="", style="Muted.TLabel")
+        self.subtitle.pack(anchor="w", pady=(0, 6))
 
-        container = ttk.Frame(self)
-        container.pack(fill="both", expand=True)
+        card = theme.card(self)
+        card.pack(fill="both", expand=True)
+        container = ttk.Frame(card.body, style="Card.TFrame")
+        container.pack(fill="both", expand=True, padx=12, pady=12)
         self.tree = ttk.Treeview(container, columns=("type", "name", "time"),
                                  show="headings", selectmode="none", height=8)
         for col, text, width in (("type", "Type", 45), ("name", "Name", 220), ("time", "Time", 90)):
@@ -241,13 +259,15 @@ class HoverActionList(ttk.Frame):
         self.tree.configure(yscrollcommand=scroll.set)
         self.tree.pack(side="left", fill="both", expand=True)
         scroll.pack(side="left", fill="y")
+        self.tree.tag_configure("hover", background=theme.BG_ALT)
 
         self.tree.bind("<Motion>", self._on_motion)
-        self.tree.bind("<Leave>", self._schedule_hide)
+        self.tree.bind("<Leave>", self._on_leave)
 
     def load(self, entries: list[dict], subtitle: str) -> None:
         """`entries` newest-first: [{kind, name, at}, ...]."""
         self._hide_popup()
+        self._hover_row = None
         self.subtitle.configure(text=subtitle)
         self.tree.delete(*self.tree.get_children())
         self._entries.clear()
@@ -259,39 +279,66 @@ class HoverActionList(ttk.Frame):
 
     def _on_motion(self, event) -> None:
         row = self.tree.identify_row(event.y)
+        self._set_hover_row(row)
         if row == self._popup_row:
             return
         self._cancel_hide()
         if row:
-            self._show_popup(row, event.x_root, event.y_root)
+            self._show_popup(row)
         else:
             self._schedule_hide()
 
-    def _show_popup(self, row: str, x_root: int, y_root: int) -> None:
+    def _on_leave(self, _event=None) -> None:
+        self._set_hover_row(None)
+        self._schedule_hide()
+
+    def _set_hover_row(self, row: str | None) -> None:
+        """Highlight the hovered row and switch to a pointer cursor, so it's
+        obvious which line a click would act on."""
+        if row == self._hover_row:
+            return
+        if self._hover_row is not None and self.tree.exists(self._hover_row):
+            self.tree.item(self._hover_row, tags=())
+        if row:
+            self.tree.item(row, tags=("hover",))
+        self.tree.configure(cursor="hand2" if row else "")
+        self._hover_row = row
+
+    def _show_popup(self, row: str) -> None:
         self._hide_popup()
         entry = self._entries.get(row)
-        if entry is None:
+        bbox = self.tree.bbox(row)
+        if entry is None or not bbox:
             return
         self._popup_row = row
 
         win = tk.Toplevel(self)
         win.overrideredirect(True)
         win.attributes("-topmost", True)
-        win.configure(bg="#20242b")
-        frame = tk.Frame(win, bg="#20242b", padx=10, pady=8)
+        win.configure(bg=theme.GLASS_PANEL)
+        frame = tk.Frame(win, bg=theme.GLASS_PANEL, padx=14, pady=10,
+                         highlightbackground=theme.GLASS_BORDER_DARK, highlightthickness=1)
         frame.pack()
-        tk.Label(frame, text=entry["name"], bg="#20242b", fg="#f2f5f8",
-                font=("Segoe UI Semibold", 10)).pack(anchor="w")
+        tk.Label(frame, text=entry["name"], bg=theme.GLASS_PANEL, fg=theme.GLASS_TEXT,
+                font=(theme.FONT, 10, "bold")).pack(anchor="w")
         when = datetime.fromisoformat(entry["at"]).strftime("%A %H:%M")
-        tk.Label(frame, text=when, bg="#20242b", fg="#8b97a8",
-                font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 6))
+        tk.Label(frame, text=when, bg=theme.GLASS_PANEL, fg=theme.GLASS_MUTED,
+                font=(theme.FONT, 9)).pack(anchor="w", pady=(0, 8))
         tk.Button(frame, text=self.action_text, bg=self.action_bg, fg="white",
-                  relief="flat", padx=10, pady=3, font=("Segoe UI", 9),
+                  relief="flat", padx=12, pady=4, font=(theme.FONT, 9, "bold"),
                   activebackground=self.action_bg, activeforeground="white",
-                  cursor="hand2", command=lambda: self._trigger(entry)).pack(anchor="w")
+                  bd=0, cursor="hand2", command=lambda: self._trigger(entry)).pack(anchor="w")
         win.bind("<Enter>", self._cancel_hide)
         win.bind("<Leave>", self._schedule_hide)
-        win.geometry(f"+{x_root + 12}+{y_root + 12}")
+
+        # Anchor to the row itself (its left edge, just below its bottom edge)
+        # rather than to the cursor - the popup should sit in the same place
+        # regardless of where within the row the mouse happens to be.
+        x, y, _width, height = bbox
+        x_root = self.tree.winfo_rootx() + x
+        y_root = self.tree.winfo_rooty() + y + height + 3
+        win.geometry(f"+{x_root}+{y_root}")
+        theme.round_corners(win, "small")
         self._popup = win
 
     def _trigger(self, entry: dict) -> None:
@@ -326,24 +373,55 @@ class Console(tk.Tk):
         self.geometry("980x720")
         self.minsize(900, 640)
 
-        style = ttk.Style(self)
-        if "vista" in style.theme_names():
-            style.theme_use("vista")
+        theme.apply(self)
+        theme.round_corners(self)
+        theme.dark_titlebar(self, False)
 
-        notebook = ttk.Notebook(self)
-        notebook.pack(fill="both", expand=True, padx=10, pady=(10, 0))
+        self.configure(bg=theme.BG_TOP)
+        backdrop = theme.Backdrop(self)
+        backdrop.pack(fill="both", expand=True)
+        content = tk.Frame(backdrop, bg=theme.BG, highlightthickness=0)
+        content_win = backdrop.create_window(0, 0, window=content, anchor="nw")
+        content_radius = 14
+
+        def _fit_content(event) -> None:
+            margin = 24
+            x1, y1 = margin, margin
+            x2, y2 = event.width - margin, event.height - margin
+            backdrop.delete("contentcard")
+            theme.draw_shadow(backdrop, x1, y1, x2, y2, content_radius,
+                              fade_to=theme.BG_BOTTOM, layers=6, spread=3, drop=5,
+                              tags="contentcard")
+            theme.round_rect(backdrop, x1, y1, x2, y2, radius=content_radius,
+                             fill=theme.BG, outline="", tags="contentcard")
+            backdrop.tag_lower("contentcard")
+            # content itself stays inset by the corner radius, so its square
+            # corners never overlap (and square off) the rounded card edge.
+            backdrop.coords(content_win, x1 + content_radius, y1 + content_radius)
+            backdrop.itemconfigure(
+                content_win,
+                width=max(1, (x2 - x1) - content_radius * 2),
+                height=max(1, (y2 - y1) - content_radius * 2))
+            backdrop.tag_raise(content_win)
+
+        backdrop.bind("<Configure>", _fit_content, add="+")
+
+        notebook = ttk.Notebook(content)
+        notebook.pack(fill="both", expand=True, pady=(0, 10))
         self._build_status_tab(notebook)
         self._build_schedule_tab(notebook)
         self._build_apps_tab(notebook)
         self._build_sites_tab(notebook)
         self._build_setup_tab(notebook)
 
-        bar = ttk.Frame(self)
-        bar.pack(fill="x", padx=10, pady=10)
-        self.footer = ttk.Label(bar, text="", foreground="#5b6472")
+        bar = ttk.Frame(content)
+        bar.pack(fill="x")
+        self.footer = ttk.Label(bar, text="", style="Muted.TLabel")
         self.footer.pack(side="left")
         ttk.Button(bar, text="Reload", command=self.reload).pack(side="right")
-        ttk.Button(bar, text="Save changes", command=self.save).pack(side="right", padx=6)
+        theme.PillButton(bar, text="Save changes", command=self.save,
+                         bg=theme.BG, fill=theme.ACCENT, hover=theme.ACCENT_HOVER
+                         ).pack(side="right", padx=6)
 
         self.after(500, self._refresh_status)
 
@@ -353,17 +431,18 @@ class Console(tk.Tk):
         tab = ttk.Frame(notebook)
         notebook.add(tab, text="Now")
 
-        self.state_label = tk.Label(tab, text="-", font=("Segoe UI Semibold", 32))
+        self.state_label = tk.Label(tab, text="-", font=(theme.FONT, 34, "bold"),
+                                    bg=theme.BG)
         self.state_label.pack(pady=(28, 4))
-        self.state_detail = ttk.Label(tab, text="", font=("Segoe UI", 11))
+        self.state_detail = ttk.Label(tab, text="", font=(theme.FONT, 11))
         self.state_detail.pack()
-        self.agent_label = ttk.Label(tab, text="", font=("Segoe UI", 10), foreground="#5b6472")
+        self.agent_label = ttk.Label(tab, text="", font=(theme.FONT, 10), style="Muted.TLabel")
         self.agent_label.pack(pady=(12, 0))
 
-        actions = ttk.LabelFrame(tab, text="Temporary override")
+        actions = theme.card(tab, title="Temporary override")
         actions.pack(pady=26, padx=40, fill="x")
-        grid = ttk.Frame(actions)
-        grid.pack(pady=12)
+        grid = ttk.Frame(actions.body, style="Card.TFrame")
+        grid.pack(pady=14)
         buttons = [
             ("Free for 30 min", sched.FREE, 30),
             ("Free for 2 hours", sched.FREE, 120),
@@ -374,10 +453,12 @@ class Console(tk.Tk):
             ttk.Button(grid, text=text, width=22,
                        command=lambda s=state, m=minutes: self.set_override(s, m)
                        ).grid(row=column // 2, column=column % 2, padx=6, pady=4)
-        ttk.Button(actions, text="Back to the schedule", command=self.clear_override).pack(pady=(0, 12))
+        theme.PillButton(actions.body, text="Back to the schedule", command=self.clear_override,
+                         bg=theme.GLASS, fill=theme.ACCENT, hover=theme.ACCENT_HOVER
+                         ).pack(pady=(0, 18))
 
         ttk.Label(tab, text="Overrides win over the weekly schedule until they expire.",
-                  foreground="#5b6472").pack()
+                  style="Muted.TLabel").pack()
 
         lists = ttk.Frame(tab)
         lists.pack(fill="both", expand=True, padx=16, pady=(10, 12))
@@ -386,11 +467,11 @@ class Console(tk.Tk):
         lists.rowconfigure(0, weight=1)
 
         self.visited_list = HoverActionList(
-            lists, "Visited this session", "Block", "#c0392b", self._quick_block)
+            lists, "Visited this session", "Block", theme.DANGER, self._quick_block)
         self.visited_list.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
 
         self.blocked_list = HoverActionList(
-            lists, "Blocked attempts", "Unblock", "#2e7d32", self._quick_unblock)
+            lists, "Blocked attempts", "Unblock", theme.SUCCESS, self._quick_unblock)
         self.blocked_list.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
 
         self.after(500, self._refresh_activity)
@@ -401,7 +482,7 @@ class Console(tk.Tk):
         self.grid_editor = ScheduleGrid(tab, self.cfg["schedule"])
         self.grid_editor.pack(fill="both", expand=True)
         ttk.Label(tab, text="Click or drag across the grid to paint. Each cell is 30 minutes.",
-                  foreground="#5b6472").pack(anchor="w", padx=16, pady=(0, 10))
+                  style="Muted.TLabel").pack(anchor="w", padx=16, pady=(0, 10))
 
     def _build_apps_tab(self, notebook: ttk.Notebook) -> None:
         tab = ttk.Frame(notebook)
@@ -412,24 +493,24 @@ class Console(tk.Tk):
             "Executable names, e.g. steam.exe. Matched case-insensitively.")
         self.apps_editor.pack(fill="both", expand=True, padx=12, pady=12)
 
-        options = ttk.LabelFrame(tab, text="Games and network")
+        options = theme.card(tab, title="Games and network")
         options.pack(fill="x", padx=12, pady=(0, 12))
         self.steam_var = tk.BooleanVar(value=self.cfg.get("block_steam_library", True))
-        ttk.Checkbutton(options, variable=self.steam_var,
+        ttk.Checkbutton(options.body, variable=self.steam_var, style="Card.TCheckbutton",
                         text="Block every program inside the Steam game folders "
                              "(covers all installed games without listing them)"
-                        ).pack(anchor="w", padx=10, pady=(8, 2))
+                        ).pack(anchor="w", padx=16, pady=(10, 2))
         folders = steamlib.game_folders()
-        ttk.Label(options,
+        ttk.Label(options.body, style="CardMuted.TLabel",
                   text="Detected: " + (", ".join(folders) if folders else "no Steam install found"),
-                  foreground="#5b6472").pack(anchor="w", padx=30, pady=(0, 6))
+                  ).pack(anchor="w", padx=36, pady=(0, 8))
         self.firewall_var = tk.BooleanVar(value=self.cfg.get("use_firewall", True))
-        ttk.Checkbutton(options, variable=self.firewall_var,
+        ttk.Checkbutton(options.body, variable=self.firewall_var, style="Card.TCheckbutton",
                         text="Also cut Steam off from the network with a firewall rule"
-                        ).pack(anchor="w", padx=10, pady=(0, 10))
+                        ).pack(anchor="w", padx=16, pady=(0, 16))
 
-        ttk.Label(tab, text="Extra folders to block (anything started from inside them):"
-                  ).pack(anchor="w", padx=12)
+        ttk.Label(tab, text="Extra folders to block (anything started from inside them):",
+                  style="Muted.TLabel").pack(anchor="w", padx=12)
         self.folders_editor = ListEditor(
             tab, self.cfg.get("blocked_folders", []),
             r"Full paths, e.g. D:\Games", height=5)
@@ -442,7 +523,7 @@ class Console(tk.Tk):
             tab, self.cfg["blocked_sites"],
             "One domain per line. www. is added automatically; other subdomains are not.")
         self.sites_editor.pack(fill="both", expand=True, padx=12, pady=12)
-        ttk.Label(tab, wraplength=880, foreground="#5b6472",
+        ttk.Label(tab, wraplength=880, style="Muted.TLabel",
                   text="Sites are blocked through the Windows hosts file during Study and "
                        "Locked periods. Browsers can bypass that with their own encrypted DNS, "
                        "so the installer turns DNS-over-HTTPS off by policy for Chrome, Edge, "
@@ -453,36 +534,39 @@ class Console(tk.Tk):
         tab = ttk.Frame(notebook)
         notebook.add(tab, text="Setup")
 
-        account = ttk.LabelFrame(tab, text="Child's Windows account")
+        account = theme.card(tab, title="Child's Windows account")
         account.pack(fill="x", padx=12, pady=12)
         self.user_var = tk.StringVar(value=self.cfg.get("child_user", ""))
-        row = ttk.Frame(account)
-        row.pack(fill="x", padx=10, pady=10)
-        ttk.Label(row, text="User name:").pack(side="left")
+        row = ttk.Frame(account.body, style="Card.TFrame")
+        row.pack(fill="x", padx=16, pady=(10, 16))
+        ttk.Label(row, text="User name:", style="Card.TLabel").pack(side="left")
         ttk.Entry(row, textvariable=self.user_var, width=28).pack(side="left", padx=8)
         ttk.Label(row, text="(the lock screen runs under this account)",
-                  foreground="#5b6472").pack(side="left")
+                  style="CardMuted.TLabel").pack(side="left")
 
-        service = ttk.LabelFrame(tab, text="Background service")
+        service = theme.card(tab, title="Background service")
         service.pack(fill="x", padx=12, pady=(0, 12))
-        buttons = ttk.Frame(service)
-        buttons.pack(fill="x", padx=10, pady=10)
-        ttk.Button(buttons, text="Install / repair", command=self.do_install).pack(side="left")
-        ttk.Button(buttons, text="Uninstall", command=self.do_uninstall).pack(side="left", padx=8)
+        buttons = ttk.Frame(service.body, style="Card.TFrame")
+        buttons.pack(fill="x", padx=16, pady=(10, 6))
+        theme.PillButton(buttons, text="Install / repair", command=self.do_install,
+                         bg=theme.GLASS, fill=theme.ACCENT, hover=theme.ACCENT_HOVER
+                         ).pack(side="left")
+        ttk.Button(buttons, text="Uninstall", style="Danger.TButton",
+                   command=self.do_uninstall).pack(side="left", padx=8)
         ttk.Button(buttons, text="Refresh", command=self._refresh_tasks).pack(side="left")
-        self.tasks_label = ttk.Label(service, text="", foreground="#5b6472", justify="left")
-        self.tasks_label.pack(anchor="w", padx=10, pady=(0, 10))
+        self.tasks_label = ttk.Label(service.body, text="", style="CardMuted.TLabel", justify="left")
+        self.tasks_label.pack(anchor="w", padx=16, pady=(0, 16))
 
-        misc = ttk.LabelFrame(tab, text="Lock screen and misc")
+        misc = theme.card(tab, title="Lock screen and misc")
         misc.pack(fill="x", padx=12, pady=(0, 12))
         self.message_var = tk.StringVar(value=self.cfg.get("lock_message", ""))
-        row = ttk.Frame(misc)
-        row.pack(fill="x", padx=10, pady=10)
-        ttk.Label(row, text="Lock screen message:").pack(side="left")
+        row = ttk.Frame(misc.body, style="Card.TFrame")
+        row.pack(fill="x", padx=16, pady=(10, 10))
+        ttk.Label(row, text="Lock screen message:", style="Card.TLabel").pack(side="left")
         ttk.Entry(row, textvariable=self.message_var).pack(side="left", fill="x",
                                                            expand=True, padx=8)
-        row = ttk.Frame(misc)
-        row.pack(fill="x", padx=10, pady=(0, 10))
+        row = ttk.Frame(misc.body, style="Card.TFrame")
+        row.pack(fill="x", padx=16, pady=(0, 16))
         ttk.Button(row, text="Change parent password", command=self.change_password).pack(side="left")
         ttk.Button(row, text="Re-apply browser DNS policy",
                    command=self.apply_browser_policy).pack(side="left", padx=8)

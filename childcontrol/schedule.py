@@ -10,7 +10,7 @@ LOCKED = "L"
 
 STATES = (FREE, STUDY, LOCKED)
 STATE_NAMES = {FREE: "Free", STUDY: "Study", LOCKED: "Locked"}
-STATE_COLORS = {FREE: "#2e7d32", STUDY: "#ef6c00", LOCKED: "#b71c1c"}
+STATE_COLORS = {FREE: "#3fa579", STUDY: "#e0982f", LOCKED: "#dd6b7f"}
 STATE_HELP = {
     FREE: "Everything allowed.",
     STUDY: "Games and distracting sites blocked, computer usable.",
