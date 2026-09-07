@@ -19,7 +19,16 @@ from pathlib import Path
 from typing import Iterator
 
 from . import browser_policy, config, firewall, hosts_block
-from .util import DATA_DIR, REPO_DIR, REQUEST_DIR, ensure_data_dir, is_admin, pythonw, run
+from .util import (
+    CLOUD_PATH,
+    DATA_DIR,
+    REPO_DIR,
+    REQUEST_DIR,
+    ensure_data_dir,
+    is_admin,
+    pythonw,
+    run,
+)
 
 AGENT_TASK = "ChildControl Agent"
 AGENT_WATCHDOG_TASK = "ChildControl Agent Watchdog"
@@ -92,6 +101,20 @@ def secure_data_dir() -> None:
                         (SID_USERS, "(OI)(CI)RX")):
         run(["icacls", str(DATA_DIR), "/grant", f"{sid}:{rights}"])
     run(["icacls", str(REQUEST_DIR), "/grant", f"{SID_USERS}:(OI)(CI)M"])
+
+
+def secure_cloud_file() -> None:
+    """The device's Firebase identity (including its refresh token) is a
+    real credential, unlike config.json - the child's account gets no
+    access to it at all, not even read-only. Called by cloud.py right after
+    the file is first created, since it's written lazily on first pairing
+    rather than at install time.
+    """
+    if not CLOUD_PATH.exists():
+        return
+    run(["icacls", str(CLOUD_PATH), "/inheritance:r"])
+    for sid in (SID_ADMINS, SID_SYSTEM):
+        run(["icacls", str(CLOUD_PATH), "/grant", f"{sid}:F"])
 
 
 @dataclass

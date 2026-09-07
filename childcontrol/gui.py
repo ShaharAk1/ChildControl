@@ -13,7 +13,7 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import messagebox, simpledialog, ttk
 
-from . import activity, browser_policy, config, install, steamlib, theme
+from . import activity, browser_policy, cloud, config, install, steamlib, theme
 from . import schedule as sched
 from .util import (
     DATA_DIR,
@@ -657,6 +657,26 @@ class Console(tk.Tk):
                    command=self.apply_browser_policy).pack(side="left", padx=8)
         ttk.Button(row, text="Open log folder", command=self.open_data_dir).pack(side="left")
 
+        website = theme.card(tab, title="Website")
+        website.pack(fill="x", padx=12, pady=(0, 12))
+        self.pairing_label = ttk.Label(website.body, text="Link status not checked yet.",
+                                       style="CardMuted.TLabel")
+        self.pairing_label.pack(anchor="w", padx=16, pady=(10, 6))
+        button_row = ttk.Frame(website.body, style="Card.TFrame")
+        button_row.pack(fill="x", padx=16, pady=(0, 8))
+        theme.PillButton(button_row, text="Generate pairing code",
+                         command=self.generate_pairing_code, bg=theme.GLASS,
+                         fill=theme.ACCENT, hover=theme.ACCENT_HOVER).pack(side="left")
+        ttk.Button(button_row, text="Check link status",
+                   command=self.check_pairing_status).pack(side="left", padx=8)
+        self.pairing_code_label = ttk.Label(website.body, text="", style="Card.TLabel",
+                                            font=(theme.FONT, 20, "bold"))
+        self.pairing_code_label.pack(anchor="w", padx=16, pady=(4, 0))
+        ttk.Label(website.body, style="CardMuted.TLabel", wraplength=520, justify="left",
+                  text="Generate a code, then enter it on the website (within 15 minutes) "
+                       "to link this PC to your parent account."
+                  ).pack(anchor="w", padx=16, pady=(4, 16))
+
         self._refresh_tasks()
 
     # --- actions -----------------------------------------------------------
@@ -777,6 +797,25 @@ class Console(tk.Tk):
 
     def open_data_dir(self) -> None:
         subprocess.Popen(["explorer", str(DATA_DIR)])
+
+    def generate_pairing_code(self) -> None:
+        self.pairing_code_label.configure(text="Generating...")
+        self.update_idletasks()
+        try:
+            code = cloud.ensure_paired_device()
+        except Exception as exc:
+            self.pairing_code_label.configure(text="")
+            messagebox.showerror("Website", f"Could not reach the website: {exc}", parent=self)
+            return
+        self.pairing_code_label.configure(text=code)
+        self.pairing_label.configure(text="Code generated - not linked yet.")
+
+    def check_pairing_status(self) -> None:
+        self.pairing_label.configure(text="Checking...")
+        self.update_idletasks()
+        owner = cloud.pairing_status()
+        self.pairing_label.configure(
+            text="Linked to the website." if owner else "Not linked yet.")
 
     # --- live status -------------------------------------------------------
 

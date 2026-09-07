@@ -14,7 +14,7 @@ import sys
 import time
 from datetime import datetime
 
-from . import activity, apps_block, browser_policy, config, firewall, hosts_block, winproc
+from . import activity, apps_block, browser_policy, cloud, config, firewall, hosts_block, winproc
 from . import schedule as sched
 from .util import (
     REQUEST_DIR,
@@ -177,6 +177,26 @@ class Enforcer:
             log.warning("unlock request rejected (bad password)")
         write_json(result_path, {"ok": ok, "at": datetime.now().isoformat(timespec="seconds")})
 
+    # --- remote control from the website (optional, best-effort) -----------
+
+    def sync_cloud(self) -> None:
+        """Pull any schedule/override the website has pushed since we last
+        checked, and report a status heartbeat. `cloud.sync_once` handles
+        its own rate-limiting (so this is cheap to call every tick) and
+        never raises - a device that was never paired, or has no network
+        right now, behaves exactly like one with no cloud feature at all.
+        """
+        cfg = config.load()
+        changes = cloud.sync_once(cfg)
+        if not changes:
+            return
+        if "schedule" in changes:
+            cfg["schedule"] = changes["schedule"]
+        if "override" in changes:
+            cfg["override"] = changes["override"]
+        config.save(cfg)
+        log.info("applied update from the website")
+
 
 def run(poll_seconds: float | None = None) -> None:
     ensure_data_dir()
@@ -190,6 +210,7 @@ def run(poll_seconds: float | None = None) -> None:
     while True:
         try:
             enforcer.handle_requests()
+            enforcer.sync_cloud()
             status = enforcer.tick()
             delay = poll_seconds or config.load().get("poll_seconds", 5)
         except Exception:
@@ -213,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.once:
         enforcer = Enforcer()
         enforcer.handle_requests()
+        enforcer.sync_cloud()
         status = enforcer.tick()
         for key in ("state_name", "override", "next_change", "last_stopped", "agent_admin"):
             print(f"{key}: {status[key]}")
