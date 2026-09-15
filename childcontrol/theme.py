@@ -158,6 +158,10 @@ def apply(root: tk.Misc) -> ttk.Style:
                      bordercolor=BG, arrowcolor=MUTED, borderwidth=0, arrowsize=13)
     style.map("Vertical.TScrollbar", background=[("active", GLASS_BORDER)])
 
+    style.configure("Horizontal.TScrollbar", background=BG_ALT, troughcolor=BG,
+                     bordercolor=BG, arrowcolor=MUTED, borderwidth=0, arrowsize=13)
+    style.map("Horizontal.TScrollbar", background=[("active", GLASS_BORDER)])
+
     style.configure("TSeparator", background=GLASS_BORDER)
 
     return style
@@ -273,6 +277,11 @@ class _GlassCardFrame(tk.Frame):
     def __init__(self, parent: tk.Misc, title: str | None = None, bg: str = BG) -> None:
         self._bg = bg
         super().__init__(parent, bg=bg, highlightthickness=0)
+        # Without this, sizing the inner canvas explicitly below (to draw the
+        # rounded shape) ratchets this wrapper's own minimum size up to match
+        # - once drawn wide, it could never be asked to shrink back down, no
+        # matter how much the window narrowed afterward.
+        self.pack_propagate(False)
         self._canvas = tk.Canvas(self, highlightthickness=0, bd=0, bg=bg)
         self._canvas.pack(fill="both", expand=True)
         self.body = tk.Frame(self._canvas, bg=GLASS)
@@ -295,6 +304,12 @@ class _GlassCardFrame(tk.Frame):
         if (w, h) == self._last_size:
             return
         self._last_size = (w, h)
+        # With pack_propagate(False) above, nothing sizes this wrapper on
+        # its own anymore - it needs its own explicit size every redraw, not
+        # just the inner canvas's. (fill="x" from the caller still lets pack
+        # override this on the width axis when the parent is wider; this is
+        # what height - and width when unmanaged - actually renders at.)
+        self.configure(width=w, height=h)
         self._canvas.configure(width=w, height=h)
         self._canvas.itemconfigure(self._win, width=w - self.RADIUS * 2)
         self._canvas.delete("shape")

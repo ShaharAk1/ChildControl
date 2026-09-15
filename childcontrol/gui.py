@@ -26,7 +26,8 @@ from .util import (
 
 log = setup_logging("console")
 
-CELL_W = 17
+MAX_CELL_W = 17
+MIN_CELL_W = 8
 CELL_H = 28
 CELL_RADIUS = 4
 LABEL_W = 92
@@ -75,18 +76,29 @@ class ScheduleGrid(ttk.Frame):
         self.week = sched.normalize(week)
         self.brush = tk.StringVar(value=sched.STUDY)
         self.cells: list[list[int]] = []
+        self.cell_w = MAX_CELL_W
 
         self._build_toolbar()
-        width = LABEL_W + sched.SLOTS_PER_DAY * CELL_W + 2
         height = HEADER_H + len(sched.DAYS) * CELL_H + 2
         card = theme.card(self)
         card.pack(fill="x", padx=8, pady=(4, 8))
-        self.canvas = tk.Canvas(card.body, width=width, height=height, highlightthickness=0,
+        self.canvas = tk.Canvas(card.body, height=height, highlightthickness=0,
                                 background=theme.GLASS)
-        self.canvas.pack(padx=16, pady=16)
-        self._draw()
+        self.canvas.pack(fill="x", padx=16, pady=16)
+        self.canvas.bind("<Configure>", self._on_resize)
         self.canvas.bind("<Button-1>", self._on_paint)
         self.canvas.bind("<B1-Motion>", self._on_paint)
+
+    def _on_resize(self, event) -> None:
+        # Shrink (never grow past the original size) each half-hour column
+        # so all 48 fit the available width - down to MIN_CELL_W, past which
+        # the tab's own horizontal scrollbar takes over as a fallback.
+        available = event.width - LABEL_W - 2
+        cell_w = max(MIN_CELL_W, min(MAX_CELL_W, available / sched.SLOTS_PER_DAY))
+        if abs(cell_w - self.cell_w) < 0.5:
+            return
+        self.cell_w = cell_w
+        self._draw()
 
     def _build_toolbar(self) -> None:
         bar = ttk.Frame(self)
@@ -114,8 +126,10 @@ class ScheduleGrid(ttk.Frame):
     def _draw(self) -> None:
         self.canvas.delete("all")
         self.cells = []
+        cell_w = self.cell_w
+        radius = min(CELL_RADIUS, cell_w / 3)
         for slot in range(0, sched.SLOTS_PER_DAY, 4):
-            x = LABEL_W + slot * CELL_W
+            x = LABEL_W + slot * cell_w
             self.canvas.create_text(x + 2, HEADER_H / 2, text=sched.slot_label(slot),
                                     anchor="w", font=(theme.FONT, 8), fill=theme.MUTED)
         for day, name in enumerate(sched.DAYS):
@@ -124,17 +138,17 @@ class ScheduleGrid(ttk.Frame):
                                     font=(theme.FONT, 9), fill=theme.TEXT)
             row = []
             for slot in range(sched.SLOTS_PER_DAY):
-                x = LABEL_W + slot * CELL_W
+                x = LABEL_W + slot * cell_w
                 rect = theme.round_rect(
-                    self.canvas, x + 1, y + 1, x + CELL_W - 1, y + CELL_H - 1,
-                    radius=CELL_RADIUS, fill=sched.STATE_COLORS[self.week[day][slot]],
+                    self.canvas, x + 1, y + 1, x + cell_w - 1, y + CELL_H - 1,
+                    radius=radius, fill=sched.STATE_COLORS[self.week[day][slot]],
                     outline=theme.CARD, width=2)
                 row.append(rect)
             self.cells.append(row)
 
     def _cell_at(self, x: float, y: float) -> tuple[int, int] | None:
         day = int((y - HEADER_H) // CELL_H)
-        slot = int((x - LABEL_W) // CELL_W)
+        slot = int((x - LABEL_W) // self.cell_w)
         if 0 <= day < len(sched.DAYS) and 0 <= slot < sched.SLOTS_PER_DAY:
             return day, slot
         return None
@@ -401,16 +415,20 @@ class HoverActionList(ttk.Frame):
 
 class ScrollableTab(ttk.Frame):
     """A notebook tab body that scrolls vertically once its content is taller
-    than the window - build tab content into `.body`, not into this frame
-    directly (same pattern as `theme.card`'s `.body`)."""
+    than the window, and horizontally on the rare tab (the weekly schedule
+    grid) whose content is intrinsically wider than the window too - build
+    tab content into `.body`, not into this frame directly (same pattern as
+    `theme.card`'s `.body`)."""
 
     def __init__(self, master: ttk.Notebook) -> None:
         super().__init__(master)
         self.canvas = tk.Canvas(self, highlightthickness=0, bg=theme.BG)
         vscroll = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=vscroll.set)
-        self.canvas.pack(side="left", fill="both", expand=True)
+        hscroll = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
+        self.canvas.configure(yscrollcommand=vscroll.set, xscrollcommand=hscroll.set)
         vscroll.pack(side="right", fill="y")
+        hscroll.pack(side="bottom", fill="x")
+        self.canvas.pack(side="left", fill="both", expand=True)
 
         self.body = ttk.Frame(self.canvas)
         self._window = self.canvas.create_window(0, 0, window=self.body, anchor="nw")
@@ -424,15 +442,31 @@ class ScrollableTab(ttk.Frame):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _on_canvas_configure(self, event) -> None:
+        # Always match the viewport width exactly - the weekly schedule grid
+        # (the one tab wide enough for this to matter) shrinks its own cell
+        # width to fit whatever it's given, down to a real minimum, so there
+        # is nothing here that legitimately needs a wider floor. There used
+        # to be a "never shrink below the content's natural width" guard,
+        # but it read that natural width from the *previous* layout pass -
+        # before the schedule grid's own resize handler had reacted to the
+        # new size - so on every shrink it fed back a stale, still-wide
+        # number and the grid could never actually get smaller. Any card
+        # that genuinely can't shrink further still won't, via its own
+        # internal minimum in theme.GlassCard - it'll just need this tab's
+        # horizontal scrollbar, which is the correct place for that fallback
+        # to live, not a second, stale-data guard up here.
         self.canvas.itemconfigure(self._window, width=event.width)
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _bind_wheel(self, _event=None) -> None:
         self.canvas.bind_all("<MouseWheel>", self._on_wheel)
+        self.canvas.bind_all("<Shift-MouseWheel>", self._on_shift_wheel)
 
     def _unbind_wheel(self, _event=None) -> None:
         self.canvas.unbind_all("<MouseWheel>")
+        self.canvas.unbind_all("<Shift-MouseWheel>")
 
-    def _on_wheel(self, event) -> None:
+    def _scrollable_target(self, event) -> bool:
         # A Treeview/Listbox nested inside (the activity lists, the block
         # lists) already scrolls itself on the wheel - only take over when
         # the cursor isn't over one of those, so scrolling a long list never
@@ -440,9 +474,17 @@ class ScrollableTab(ttk.Frame):
         widget = event.widget
         while widget is not None:
             if isinstance(widget, (ttk.Treeview, tk.Listbox)):
-                return
+                return False
             widget = getattr(widget, "master", None)
-        self.canvas.yview_scroll(int(-event.delta / 120), "units")
+        return True
+
+    def _on_wheel(self, event) -> None:
+        if self._scrollable_target(event):
+            self.canvas.yview_scroll(int(-event.delta / 120), "units")
+
+    def _on_shift_wheel(self, event) -> None:
+        if self._scrollable_target(event):
+            self.canvas.xview_scroll(int(-event.delta / 120), "units")
 
 
 class Console(tk.Tk):
@@ -450,8 +492,8 @@ class Console(tk.Tk):
         super().__init__()
         self.cfg = cfg
         self.title("ChildControl - parent console")
-        self.geometry("980x720")
-        self.minsize(900, 640)
+        self.geometry("1180x760")
+        self.minsize(760, 560)
 
         theme.apply(self)
         theme.round_corners(self)
