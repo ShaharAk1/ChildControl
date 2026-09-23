@@ -33,6 +33,9 @@ CELL_RADIUS = 4
 LABEL_W = 92
 HEADER_H = 22
 STALE_SECONDS = 45
+# Display order of the grid rows as indices into sched.DAYS (Monday=0): the
+# week is shown starting on Sunday, but stored and synced Monday-first.
+ROW_DAYS = (6, 0, 1, 2, 3, 4, 5)
 
 
 class PasswordGate:
@@ -125,15 +128,16 @@ class ScheduleGrid(ttk.Frame):
 
     def _draw(self) -> None:
         self.canvas.delete("all")
-        self.cells = []
         cell_w = self.cell_w
         radius = min(CELL_RADIUS, cell_w / 3)
         for slot in range(0, sched.SLOTS_PER_DAY, 4):
             x = LABEL_W + slot * cell_w
             self.canvas.create_text(x + 2, HEADER_H / 2, text=sched.slot_label(slot),
                                     anchor="w", font=(theme.FONT, 8), fill=theme.MUTED)
-        for day, name in enumerate(sched.DAYS):
-            y = HEADER_H + day * CELL_H
+        self.cells = [[] for _ in sched.DAYS]
+        for row_index, day in enumerate(ROW_DAYS):
+            name = sched.DAYS[day]
+            y = HEADER_H + row_index * CELL_H
             self.canvas.create_text(LABEL_W - 10, y + CELL_H / 2, text=name, anchor="e",
                                     font=(theme.FONT, 9), fill=theme.TEXT)
             row = []
@@ -144,13 +148,13 @@ class ScheduleGrid(ttk.Frame):
                     radius=radius, fill=sched.STATE_COLORS[self.week[day][slot]],
                     outline=theme.CARD, width=2)
                 row.append(rect)
-            self.cells.append(row)
+            self.cells[day] = row
 
     def _cell_at(self, x: float, y: float) -> tuple[int, int] | None:
-        day = int((y - HEADER_H) // CELL_H)
+        row_index = int((y - HEADER_H) // CELL_H)
         slot = int((x - LABEL_W) // self.cell_w)
-        if 0 <= day < len(sched.DAYS) and 0 <= slot < sched.SLOTS_PER_DAY:
-            return day, slot
+        if 0 <= row_index < len(ROW_DAYS) and 0 <= slot < sched.SLOTS_PER_DAY:
+            return ROW_DAYS[row_index], slot
         return None
 
     def _on_paint(self, event) -> None:
