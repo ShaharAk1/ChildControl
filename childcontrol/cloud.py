@@ -21,13 +21,14 @@ No third-party packages: every call here is a plain HTTPS/JSON request via
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-from .util import CLOUD_PATH, STATUS_PATH, ensure_data_dir, read_json, setup_logging, write_json
+from .util import CLOUD_PATH, CONFIG_PATH, STATUS_PATH, ensure_data_dir, read_json, setup_logging, write_json
 
 log = setup_logging("cloud")
 
@@ -127,6 +128,10 @@ def _v_timestamp(iso: str) -> dict:
     return {"timestampValue": iso}
 
 
+def _v_str_array(values: list[str]) -> dict:
+    return {"arrayValue": {"values": [{"stringValue": v} for v in values]}}
+
+
 def _v_map(fields: dict) -> dict:
     return {"mapValue": {"fields": fields}}
 
@@ -145,6 +150,43 @@ def _decode(value: dict):
     if "arrayValue" in value:
         return [_decode(v) for v in value.get("arrayValue", {}).get("values", [])]
     return None
+
+
+_DOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$")
+_MAX_LIST_ITEMS = 500
+
+
+def _clean_sites(value) -> list[str] | None:
+    """Validate a list pushed from the website. None means "ignore it" (not a
+    list at all); bad entries inside a list are dropped rather than trusted."""
+    if not isinstance(value, list):
+        return None
+    from . import hosts_block
+    out: list[str] = []
+    for raw in value[:_MAX_LIST_ITEMS]:
+        if not isinstance(raw, str):
+            continue
+        domain = hosts_block.normalize_domain(raw)
+        if len(domain) <= 253 and _DOMAIN_RE.match(domain) and domain not in out:
+            out.append(domain)
+    return out
+
+
+def _clean_apps(value) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in value[:_MAX_LIST_ITEMS]:
+        if not isinstance(raw, str):
+            continue
+        name = raw.strip()
+        if (not name or len(name) > 100 or not name.lower().endswith(".exe")
+                or any(ch in name for ch in "\\/:*?\"<>|") or name.lower() in seen):
+            continue
+        seen.add(name.lower())
+        out.append(name)
+    return out
 
 
 def _now_iso() -> str:
@@ -307,6 +349,16 @@ def sync_once(cfg: dict) -> dict | None:
             changes["override"] = _decode(fields.get("override", _NULL))
             last["override_updated_at"] = override_updated
 
+        blocked_updated = _decode(fields.get("blockedUpdatedAt", _NULL))
+        if blocked_updated and blocked_updated != last.get("blocked_updated_at"):
+            sites = _clean_sites(_decode(fields.get("blockedSites", _NULL)))
+            apps = _clean_apps(_decode(fields.get("blockedApps", _NULL)))
+            if sites is not None:
+                changes["blocked_sites"] = sites
+            if apps is not None:
+                changes["blocked_apps"] = apps
+            last["blocked_updated_at"] = blocked_updated
+
         data["last_applied"] = last
         _save(data)
 
@@ -319,12 +371,16 @@ def sync_once(cfg: dict) -> dict | None:
 
 def _push_heartbeat(uid: str, id_token: str) -> None:
     status = read_json(STATUS_PATH, default={}) or {}
+    cfg = read_json(CONFIG_PATH, default={}) or {}
     try:
         _firestore_patch("devices", uid, {
             "status": _v_map({
                 "state": _v_str(status.get("state", "")),
                 "stateName": _v_str(status.get("state_name", "")),
                 "updatedLocal": _v_str(status.get("updated", "")),
+                "blockedSites": _v_str_array([str(x) for x in cfg.get("blocked_sites") or []]),
+                "blockedApps": _v_str_array([str(x) for x in cfg.get("blocked_apps") or []]),
+                "schedule": _v_str_array([str(x) for x in cfg.get("schedule") or []]),
             }),
             "lastSeen": _v_timestamp(_now_iso()),
         }, id_token)

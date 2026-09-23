@@ -194,6 +194,9 @@ class Enforcer:
             cfg["schedule"] = changes["schedule"]
         if "override" in changes:
             cfg["override"] = changes["override"]
+        for key in ("blocked_sites", "blocked_apps"):
+            if key in changes:
+                cfg[key] = changes[key]
         config.save(cfg)
         log.info("applied update from the website")
 

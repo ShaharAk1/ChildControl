@@ -141,8 +141,11 @@ def override_active(cfg: dict, now: datetime | None = None) -> dict | None:
         return None
     try:
         until = datetime.fromisoformat(override["until"])
-    except (KeyError, ValueError):
+    except (KeyError, ValueError, TypeError):
         return None
+    if until.tzinfo is not None:
+        # The website sends UTC ("...Z"); the agent works in naive local time.
+        until = until.astimezone().replace(tzinfo=None)
     if now >= until or override.get("state") not in sched.STATES:
         return None
     return {"state": override["state"], "until": until}

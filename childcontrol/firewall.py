@@ -7,6 +7,7 @@ All rules share one group so they can be toggled with a single command.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from .util import run
@@ -19,7 +20,12 @@ def rule_name(program: str) -> str:
 
 
 def _netsh(args: list[str]):
-    return run(["netsh", "advfirewall", "firewall", *args])
+    # A hung netsh must never stall the agent's enforcement loop: treat a
+    # timeout as a failed command instead of letting it raise.
+    try:
+        return run(["netsh", "advfirewall", "firewall", *args], timeout=10)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(args, returncode=1, stdout="", stderr="timeout")
 
 
 def delete_rule(program: str) -> None:
@@ -44,6 +50,8 @@ def ensure_rules(programs: list[str], enabled: bool) -> bool:
                 f"enable={'yes' if enabled else 'no'}",
             ])
             ok = ok and result.returncode == 0
+            if result.stderr == "timeout":
+                return False
     return ok
 
 
