@@ -258,7 +258,7 @@ def ensure_paired_device() -> str:
 
     if _firestore_get("devices", uid, id_token) is None:
         _firestore_create("devices", uid, {
-            "ownerUid": _NULL,
+            "ownerUids": _v_str_array([]),
             "name": _v_str(""),
             "schedule": _NULL,
             "scheduleUpdatedAt": _NULL,
@@ -281,11 +281,12 @@ def ensure_paired_device() -> str:
     return code
 
 
-def pairing_status() -> str | None:
-    """The linked parent's Firebase uid, or None if this device has never
-    been paired, isn't claimed yet, or the check itself failed (offline,
-    backend unreachable) - callers can't distinguish those cases from the
-    return value alone, which is fine for a status label."""
+def pairing_status() -> list[str] | None:
+    """The linked parents' Firebase uids (possibly more than one device can
+    now be shared), or None if this device has never been paired, isn't
+    claimed by anyone yet, or the check itself failed (offline, backend
+    unreachable) - callers can't distinguish those cases from the return
+    value alone, which is fine for a status label (just check truthiness)."""
     try:
         data = _load()
         if "identity" not in data:
@@ -294,8 +295,9 @@ def pairing_status() -> str | None:
         doc = _firestore_get("devices", data["identity"]["uid"], id_token)
         if doc is None:
             return None
-        owner = doc.get("fields", {}).get("ownerUid")
-        return _decode(owner) if owner else None
+        owners = doc.get("fields", {}).get("ownerUids")
+        decoded = _decode(owners) if owners else []
+        return decoded or None
     except Exception:
         log.warning("pairing_status check failed", exc_info=True)
         return None
