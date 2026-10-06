@@ -16,6 +16,7 @@ DATA_DIR = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / APP_NAME
 CONFIG_PATH = DATA_DIR / "config.json"
 STATUS_PATH = DATA_DIR / "status.json"
 CLOUD_PATH = DATA_DIR / "cloud.json"
+HASHES_PATH = DATA_DIR / "blocked_hashes.json"
 REQUEST_DIR = DATA_DIR / "requests"
 LOG_PATH = DATA_DIR / "childcontrol.log"
 
